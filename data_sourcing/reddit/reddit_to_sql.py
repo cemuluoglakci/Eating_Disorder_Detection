@@ -11,6 +11,7 @@ class RedditDb():
     COMMENTS_TABLE_NAME = "tblComments"
     SUBREDDIT_TABLE_NAME = "tblSubreddits"
     RULES_TABLE_NAME = "tblRules"
+    DETAILLED_POSTS_NAME = "vw_PostsDetailed"
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -37,8 +38,9 @@ class RedditDb():
             year = Tools.getYearValue(key)
             insert_statement = tblUsers.insert().values(
                 Id=key, 
+                AuthorId=user.id,
+                Fullname=user.fullname,
                 Name=user.name, 
-                Fullname=user.fullname, 
                 Year=year)
             try:
                 self.sql.execute(insert_statement)
@@ -62,8 +64,6 @@ class RedditDb():
             for comment in user.comments.new():
                 insert_statement = tblComments.insert().values(Id=comment.id, 
                     Name=comment.name,
-                    SubmissionTitle=comment.submission.title, 
-                    LinkTitle=comment.link_title,
                     CreatedUtc=comment.created_utc,
                     Body=comment.body,
                     SubmissionId=comment.submission.id,
@@ -102,10 +102,18 @@ class RedditDb():
         SubmissionIdList = comments_df.SubmissionId.unique()
         print(f"Retrieving {len(SubmissionIdList)} distinct submissions")
         
+        submissions_df = self.GetTableAsDf(self.SUBMISSIONS_TABLE_NAME)
+        SavedSubmissionIdList = submissions_df.Id.unique()
+        print(f"Already saved submission count: {len(SavedSubmissionIdList)}")
+
+        temp = set(SavedSubmissionIdList)
+        ReducedSubmissionIdList = [x for x in SubmissionIdList if x not in temp]
+        print(f"Reduced submission count: {len(ReducedSubmissionIdList)}")
+
         self.savedSubmissionCount = 0
         self.skippedSubmissionCount = 0
 
-        for Id in SubmissionIdList:
+        for Id in ReducedSubmissionIdList:
             submission = self.redditClient.connection.submission(Id)
             self.__SaveSubmissionInstance(submission)
 
@@ -113,6 +121,12 @@ class RedditDb():
         print(f"{self.skippedSubmissionCount} submission instance(s) already saved to database and skipped")
 
     def __SaveSubmissionInstance(self, submission):
+        authorId = None
+        try:
+            authorId = submission.author.id
+        except:
+            pass
+
         insert_statement = self.tblSubmissions.insert().values(Id=submission.id, 
             Name=submission.name,
             Title=submission.title, 
@@ -123,34 +137,40 @@ class RedditDb():
             UpvoteRatio=submission.upvote_ratio,
             Media=str(submission.media),
             MediaEmbed=str(submission.media_embed),
-            MediaOnly=submission.media_only,
-            SubredditId=submission.subreddit_id,
-            AuthorId=None if submission.author==None else submission.author.name)
+            SubredditId=submission.subreddit.id,
+            AuthorId=authorId)
         try:
             self.sql.execute(insert_statement)
             self.savedSubmissionCount += 1
-        except:
+        except Exception as e:
+            print(e)
             self.skippedSubmissionCount += 1
             
     def SaveSubredditsToSql(self):
         tblSubreddits = self.GetTableDefinition(self.SUBREDDIT_TABLE_NAME)
+
         submissions_df = self.GetTableAsDf(self.SUBMISSIONS_TABLE_NAME)
         subredditIdList = submissions_df.SubredditId.unique()
         print(f"Retrieving {len(subredditIdList)} distinct subreddits")
 
+        subreddits_df = self.GetTableAsDf(self.SUBREDDIT_TABLE_NAME)
+        SavedSubredditIdList = subreddits_df.Id.unique()
+        print(f"Already saved subreddit count: {len(SavedSubredditIdList)}")
+        temp = set(SavedSubredditIdList)
+        ReducedSubredditIdList = [x for x in subredditIdList if x not in temp]
+        print(f"Reduced submission count: {len(ReducedSubredditIdList)}")
+
         savedSubredditCount = 0
         skippedSubredditCount = 0
 
-        for Id in subredditIdList:
-            subreddit = list(self.redditClient.connection.info([Id]))[0]
+        for Id in ReducedSubredditIdList:
+            subreddit = list(self.redditClient.connection.info(["t5_" + Id]))[0]
             insert_statement = self.tblSubreddits.insert().values(
                 Id=subreddit.id, 
                 Name=subreddit.name,
                 DisplayName=subreddit.display_name,                
                 Title=subreddit.title, 
                 CreatedUtc=subreddit.created_utc,
-                AccountsActive=subreddit.accounts_active,
-                ActiveUserAccount=subreddit.active_user_count,
                 Subscribers=subreddit.subscribers,
                 Over18=subreddit.over18,
                 PublicDescription=subreddit.public_description,
